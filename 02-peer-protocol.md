@@ -995,7 +995,10 @@ is destined, is described in [BOLT #4](04-onion-routing.md).
     1. type: 0 (`blinding_point`)
     2. data:
         * [`point`:`blinding`]
-
+    1. type: 1 (`endorsed`)
+    2. data:
+        * [`byte`:`endorsed`]
+ 
 #### Requirements
 
 A sending node:
@@ -1033,6 +1036,10 @@ A sending node:
   - MUST increase the value of `id` by 1 for each successive offer.
   - if it is relaying a payment inside a blinded route:
     - MUST set `blinding_point` (see [Route Blinding](04-onion-routing.md#route-blinding))
+  - if it is the original source of the HTLC:
+    - SHOULD set `endorsed` to `1`. 
+  - otherwise: 
+    - SHOULD set `endorsed` as described in [Bolt 4](04-onion-routing.md#resource-bucketing).
 
 `id` MUST NOT be reset to 0 after the update is complete (i.e. after `revoke_and_ack` has
 been received). It MUST continue incrementing instead.
@@ -1059,6 +1066,8 @@ A receiving node:
       `error` and fail the channel.
   - if `blinding_point` is provided:
     - MUST use the corresponding blinded private key to decrypt the `onion_routing_packet` (see [Route Blinding](04-onion-routing.md#route-blinding))
+  - if `endorsed` is provided:
+    - SHOULD interpret `endorsed` as described in [Bolt 4](04-onion-routing.md#resource-bucketing).
 
 The `onion_routing_packet` contains an obfuscated list of hops and instructions for each hop along the path.
 It commits to the HTLC by setting the `payment_hash` as associated data, i.e. includes the `payment_hash` in the computation of HMACs.

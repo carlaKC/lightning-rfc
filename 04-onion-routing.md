@@ -53,6 +53,7 @@ A node:
     * [Route Blinding](#route-blinding)
   * [Accepting and Forwarding a Payment](#accepting-and-forwarding-a-payment)
     * [Non-strict Forwarding](#non-strict-forwarding)
+    * [Resource Bucketing](#resource-bucketing)
     * [Payload for the Last Node](#payload-for-the-last-node)
   * [Shared Secret](#shared-secret)
   * [Blinding Ephemeral Keys](#blinding-ephemeral-keys)
@@ -62,6 +63,7 @@ A node:
   * [Returning Errors](#returning-errors)
     * [Failure Messages](#failure-messages)
     * [Receiving Failure Codes](#receiving-failure-codes)
+  * [Recommendations for Reputation](#recommendations-for-reputation)
   * [Test Vector](#test-vector)
     * [Returning Errors](#returning-errors)
   * [References](#references)
@@ -634,6 +636,35 @@ across all channels with the same peer.
 Alternatively, implementations may choose to apply non-strict forwarding only to
 like-policy channels to ensure their expected fee revenue does not deviate by
 using an alternate channel.
+
+## Resource Bucketing
+
+When making the decision to forward a payment on its outgoing channel, a node 
+MAY choose to limit its exposure to HTLCs that put it at risk of a denial of 
+service attack.
+* `unknown_allocation_slots`: defines the number of HTLC slots allocated to 
+   unknown traffic (default: 50% of remote peer's `max_accepted_htlcs`).
+* `unknown_allocation_liquidity`: defines the amount of the channel balance 
+   that is allocated to unknown traffic (default: 50% of remote peer's 
+   `max_htlc_value_in_flight_msat`.
+
+A node implementing resource bucketing limits exposure on its outgoing channel:
+- MUST choose `unknown_allocation_slots` <= the remote channel peer's 
+  `max_accepted_htlcs`.
+- MUST choose `unknown_allocation_liquidity` <= the remote channel peer's 
+  `max_htlc_value_in_flight_msat`.
+- If `endorsed` is set to 1 in the incoming `update_add_htlc` AND the HTLC 
+  is from a node that the forwarding node considers to have good local 
+  reputation (see [Recommendations for Reputation](#recommendations-for-reputation)):
+  - SHOULD proceed with forwarding the HTLC.
+  - SHOULD set `endorsed` to 1 in the outgoing `update_add_htlc`.
+- Otherwise, the HTLC is classified as `unknown`:
+  - If `unknown_allocation_slots` HTLC slots are occupied by other `unknown` HTLCs: 
+    - SHOULD return `temporary_channel_failure` as specified in [Failure Messages](#failure-messages).
+  - If `unknown_allocation_liquidity`  satoshis of liquidity are locked in 
+    other `unknown` HTLCs: 
+    - SHOULD return `temporary_channel_failure` as specified in [Failure Messages](#failure-messages).
+  - SHOULD set `endorsed` to 0 in the outgoing `update_add_htlc`. 
 
 ## Payload for the Last Node
 
@@ -1406,6 +1437,117 @@ The _origin node_:
     - SHOULD then retry routing and sending the payment.
   - MAY use the data specified in the various failure types for debugging
   purposes.
+
+## Recommendations for Reputation
+
+Local reputation is used by forwarding nodes to decide whether to endorse a HTLC
+on their outgoing link. Nodes MAY use any metric of their choosing to classify
+a peer as having "good" reputation, though a poor choice of reputation scoring
+metric may affect their downstream reputation.
+
+Peers build reputation by forwarding successful HTLCs that resolve quickly, and
+lose reputation if they endorse failing or slow-resolving HTLCs. Reputation is
+only _negatively_ affected if an endorsed HTLC resolves undesirably, to hold
+nodes accountable for their endorsement signal while still allowing them to 
+forward unendorsed HTLCs that they are not certain about.
+
+HTLC resolution time is assessed relative to a threshold that the node 
+considers to be a reasonable amount of time for a HTLC to resolve: 
+- `resolution_period`: the amount of time a HTLC is allowed to resolve in that 
+  is classified as "good" behavior, expressed in seconds (default: 60 seconds).
+- `resolution_time`: the time elapsed between `update_add_htlc` and its 
+  resolution (`update_fulfill_hltc` / `update_fail_hltc` / 
+  `update_fail_malformed_htlc`), expressed in seconds.
+
+Each HTLC's contribution to reputation is expressed by its `effective_fees` 
+which capture the fees that it paid and the opportunity cost that holding it 
+for `resolution_time` incurred. 
+- `fees`: the fees paid by a forwarded HTLC (as described in [BOLT #7](07-routing-gossip.md#htlc-fees), 
+  equal to 0 if the HTLC was not fulfilled).
+- `opportunity_cost`: `ceil ( (resolution_time - resolution_period) / resolution_period) * fees`
+
+Given that `resolution_time` will be > 0 in practice, `opportunity_cost` is 0 
+for HTLCs that resolve within `resolution_period`, and charges the `fees` that 
+the HTLC would have earned per period it is held thereafter. This cost accounts 
+for the slot and liquidity that could have otherwise been paid for by 
+successful, fast resolving HTLCs during the `resolution_time` the HTLC was 
+locked in the channel.
+
+For every resolved incoming HLTC a peer has forwarded through a node, its 
+`effective_fees` are calculated as follows:
+- if `endorsed` = 1 in `update_add_htlc`:
+  - `effective_fees` = `fees` - `opportunity_cost` 
+- otherwise: 
+  - if successfully resolved AND `resolution_time` <= `resolution_period`
+    - `effective_fees` = `fees` * 0.5
+  - otherwise: 
+    - `effective_fees` = 0
+
+Incoming in-flight HTLCs have a negative impact on reputation, as their 
+influence is unknown until time of resolution. The `outstanding_risk` of each 
+in flight HTLC is calculated as follows: 
+- if `endorsed` = 1 in `update_add_htlc`:
+  - `outstanding_risk` = `fees` * ( `cltv_expiry` - `height_added` * 10 * 60), 
+    where `height_added` is the block height at which the HLTC was irrevocably
+    committed to by the receiving node.
+
+The `effective_fees` that a peer has paid our node are compared to our total 
+routing revenue to classify a peer's reputation as "good" or "neutral". This
+relates the fees that must be paid to earn "good" reputation to the damage that 
+can be done by abusing it.
+
+Routing revenue is assessed over a sliding window, so that reputation 
+classification is related to the node's current routing activity. Nodes MAY
+choose a window per their preferences - shorter windows being more reactive to 
+recent routing patterns, and longer windows aggregating trends over time.
+
+- `routing_window`: the period of time in which total routing revenue is 
+  assessed (default: 10 minutes * the maximum number of blocks a HTLC may be
+  held before the node will send `expiry_too_far`, as outlined in [Failure Messages](#failure-messages)).
+- `routing_revenue`: the sum of all fees paid to the node to forward HTLCs
+  over the interval [ `now` - `routing_window` ; `now` ].
+
+The total `effective_fees` that an individual peer has generated are assessed
+over a longer period of time to relate its reputation classification to the 
+routing activity of the node (represented by `routing_revenue`).
+
+- `reputation_window`: the period of time over which the node's `effective_fees`
+  are calculated to classify its reputation (recommended default = 10 * `routing_window`).
+- `reputation_revenue`: the total `effective_fees` of HTLCs forwarded by the peer
+  over the interval [ `now` - `reputation_window` ; `now` ] less the sum of 
+  `outstanding_risk` for all incoming, in-flight HLTCs from the peer.
+
+A peer is classified as having "good" local reputation iff `reputation_revenue` >= `routing_revenue`, 
+otherwise the peer's reputation is classified as "neutral".
+
+### Rationale
+
+A jamming attack can only be achieved with good reputation, as the resources 
+available to neutral reputation nodes are limited by resource bucketing. If a 
+node is attacked, it is guaranteed to have been paid at least its 
+`routing_revenue` over the previous `reputation_window`.
+
+Reputation is only negatively affected if a HTLC was endorsed to help protect 
+the network's ability to forward "unknown" HTLCs - those from low-activity or 
+new entrants that may very well be honest, but have not build up good 
+reputation through a history of consistent, good behavior.
+
+Intuitively if a HTLC is endorsed by a peer they have signaled that they expect 
+the HTLC to resolve honestly, they should be held accountable for that signal.
+By contrast, if a HTLC was not endorsed by the upstream peer, it should not 
+have a negative impact on reputation. In the case where one of these 
+"unknown" HTLCs succeeds within the reasonable resolution threshold, the 
+peer is still credited with fees because the HTLC resolved desirably. This 
+allows new, unendorsed entrants to slowly build reputation over time. The fee 
+contribution of unendorsed HTLCs is discounted by 50% to incentivise nodes to 
+endorse HTLCs.
+
+In flight HLTCs are included in reputation scoring to account for sudden changes
+in a peer's behavior. Even when good reputation is obtained, each HTLC choosing 
+to take advantage of that good reputation is treated as if it will be used to 
+inflict maximum damage. The expiry height of each incoming in flight HLTC is 
+considered so that risk is directly related to the amount of time the HTLC 
+could be held in the channel, and 10 minute blocks are assumed for simplicity.
 
 # Test Vector
 
