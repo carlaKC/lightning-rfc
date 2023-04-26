@@ -53,6 +53,7 @@ A node:
     * [Route Blinding](#route-blinding)
   * [Accepting and Forwarding a Payment](#accepting-and-forwarding-a-payment)
     * [Non-strict Forwarding](#non-strict-forwarding)
+    * [Resource Bucketing](#resource-bucketing)
     * [Payload for the Last Node](#payload-for-the-last-node)
   * [Shared Secret](#shared-secret)
   * [Blinding Ephemeral Keys](#blinding-ephemeral-keys)
@@ -62,6 +63,7 @@ A node:
   * [Returning Errors](#returning-errors)
     * [Failure Messages](#failure-messages)
     * [Receiving Failure Codes](#receiving-failure-codes)
+  * [Recommendations for Reputation](#recommendations-for-reputation)
   * [Test Vector](#test-vector)
     * [Returning Errors](#returning-errors)
   * [References](#references)
@@ -634,6 +636,40 @@ across all channels with the same peer.
 Alternatively, implementations may choose to apply non-strict forwarding only to
 like-policy channels to ensure their expected fee revenue does not deviate by
 using an alternate channel.
+
+## Resource Bucketing
+
+When making the decision to forward a payment on its outgoing channel, a node 
+MAY choose to reserve a portion of its scarce resources for payments that it 
+believes to be honest to protect against denial of service attacks.
+* `honest_reserve_slots`: defines the number of HTLC slots reserved for traffic
+   that it believes to be honest.   
+* `honest_reserve_satoshis`: defines the amount of the channel balance that 
+   is reserved for traffic that it believes to be honest.
+
+It is recommended to reserve 50% of a channel's liquidity and slots for 
+honest payments to accommodate the recommended maximum HTLC size (per the 
+Oakland Protocol). Nodes wishing to disable this denial of service protection 
+MAY set these reserve values to 0 to disable it.
+
+A node implementing resource bucketing limits exposure on its outgoing channel:
+- MUST choose `honest_reserve_slots` <= the remote channel peer's 
+  `max_accepted_htlcs`.
+- MUST choose `honest_reserve_satoshis` <= the remote channel peer's 
+  `max_htlc_value_in_flight_msat`.
+- If `endorsed` is set to 1 in the incoming `update_add_htlc` AND the HTLC 
+  is from a node that the forwarding node considers to have good local 
+  reputation (see [Recommendations for Reputation](#recommendations-for-reputation)):
+  - SHOULD proceed with forwarding the HTLC.
+  - SHOULD set `endorsed` to 1 in the outgoing `update_add_htlc`.
+- Otherwise, the HTLC is classified as `unknown`:
+  - If remote `max_accepted_htlcs` - `honest_reserve_slots` HTLC slots are occupied 
+    by other `unknown` HTLCs: 
+    - SHOULD return `temporary_channel_failure` as specified in [Failure Messages](#failure-messages).
+  - If remote `max_htlc_value_in_flight_msat` - `honest_reserve_satoshis` 
+    satoshis of liquidity is locked in other `unknown` HTLCs: 
+    - SHOULD return `temporary_channel_failure` as specified in [Failure Messages](#failure-messages).
+  - SHOULD set `endorsed` to 0 in the outgoing `update_add_htlc`. 
 
 ## Payload for the Last Node
 
@@ -1406,6 +1442,10 @@ The _origin node_:
     - SHOULD then retry routing and sending the payment.
   - MAY use the data specified in the various failure types for debugging
   purposes.
+
+# Recommendations for Reputation
+
+At the time of writing, specification for reputation recommendations is ongoing.
 
 # Test Vector
 
