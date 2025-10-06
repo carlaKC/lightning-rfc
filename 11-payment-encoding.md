@@ -205,9 +205,9 @@ A writer:
   - if a writer offers more than one of any field type, it:
     - MUST specify the most-preferred field first, followed by less-preferred fields, in order.
   - if the invoice will be resolved within 90 seconds of HTLC(s) arrival:
-    - SHOULD include a `a` field
+    - SHOULD include a single `a` field
   - otherwise:
-    - MUST NOT include a single `a` field
+    - MUST NOT include an `a` field
 
 A reader:
   - MUST skip over unknown fields, OR an `f` field with unknown `version`, OR  `p`, `h` or
