@@ -242,7 +242,7 @@ We define the `outgoing_channel_reputation`:
 
 ##### Rationale
 
-Fees are used to accumulate reputation because they are an unforegable,
+Fees are used to accumulate reputation because they are an unforgeable,
 in-protocol cost to the attacker. For the outgoing channel, only HTLCs where
 the channel has acted as the outgoing party in a forward are counted
 because we're interested in their historical actions as an outgoing peer.
