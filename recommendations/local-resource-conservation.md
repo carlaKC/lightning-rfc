@@ -511,16 +511,26 @@ resolved HTLC at timestamp `t`:
 ### Revenue Threshold Aggregation
 
 It is recommended to track the average value of `incoming_revenue_threshold`
-over `reputation_multiplier` periods to protect these thresholds against
-shocks (either naturally occurring, or induced by an attacker). For example,
-with a `revenue_window` of 2 weeks and a `reputation_multiplier` of 12, it is
-recommended to track `incoming_revenue_threshold` for 12 periods of 2 weeks.
+over several periods to protect against shocks (either naturally occurring,
+or induced by an attacker). We define the number of periods tracked over as 
+`window_total` and recommend a value of at least 6.
 
-This can be implemented by individually tracking each period's 
-`incoming_revenue_threshold`, or by tracking a `decaying_average` over the
-full `revenue_window` * `reputation_multiplier` period and dividing the value
-by `reputation_multiplier` to get the average value for a single 
-`revenue_window`.
+This can be implemented as follows:
+* Track `decaying_average` over the full `revenue_window * window_total`
+* Track the time that this `decaying_average` is initialized at as
+  `start_time_seconds`.
+* Add values to this decaying average as described above.
+* To read values at time `now`:
+  * Calculate `periods_elapsed = (start_time - now) / revenue_window`.
+  * Take the value of the `decaying_average` at `now`
+  * Calculate `warmup_factor = periods_elapsed/window_total*(window_total × (1 - e^(-periods_elapsed/window_total)))`
+  * Take the value of the `decaying_average` at `now` divided by `warmup_factor`
+    to get the averaged value. 
+
+Tracking revenue this way allows tracking averages without needing to store
+multiple data points. A warmup factor is required because a single longer
+`decaying_average` underestimates average values in the first few windows
+tracked. This factor approaches `window_total` as the `periods_elapsed` grows.
 
 ### Multiple Channels
 
