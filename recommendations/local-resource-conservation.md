@@ -493,7 +493,7 @@ average, track the following values:
     average, expressed in seconds.
 - `decaying_average`: stores the value of the decaying average.
 - `decay_rate`: a constant rate of decay based on the rolling window chosen,
-  calculated as: `(1/2)^(2/window_length_seconds)`.
+  calculated as: `(1/2)^(1/ln(2)*window_length_seconds)`
 
 To update the `decaying_average` at time `t`:
 - `last_update_diff` = `now` - `last_update`.
