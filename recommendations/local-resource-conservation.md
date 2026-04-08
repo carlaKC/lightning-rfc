@@ -421,7 +421,7 @@ The protected bucket is reserved for peers with sufficient outgoing reputation.
 There are no restrictions on usage so that channels that have built sufficient
 reputation can operate as usual during periods of attack. If this bucket is
 full, HTLCs that were eligible to use it may utilize any other available 
-resources in general or congestion buckets.
+resources in general or congestion buckets (using them partially if need be).
 
 #### Rationale
 
