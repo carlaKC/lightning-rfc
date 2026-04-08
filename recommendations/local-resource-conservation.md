@@ -332,6 +332,11 @@ Recommended Defaults:
 - Congestion: 20% of `max_accepted_htlcs` and `max_htlc_value_in_flight_msat`.
 - Protected: 40% of `max_accepted_htlcs` and `max_htlc_value_in_flight_msat`.
 
+Note that if a channel has a sufficiently small `max_accepted_htlcs` or
+`max_htlc_value_in_flight_msat`, these buckets cannot provided meaningful
+protection under attack. It is recommended to assign all resources to the
+general bucket to provide basic DOS protections.
+
 ### General Bucket
 
 To protect the general bucket from trivial denial of service, each forwarding
