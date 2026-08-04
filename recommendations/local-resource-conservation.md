@@ -357,7 +357,8 @@ Each `(incoming scid, outgoing scid)` is deterministically assigned slots:
   have been generated.
 
 Where `salt`:
-- MUST be randomly chosen and unique per channel.
+- MUST be a single random value, chosen by the local node and used across all
+  channels.
 - SHOULD be persisted across restarts to restore slot allocations.
 
 An HTLC occupies a whole number of slots proportional to its liquidity:
