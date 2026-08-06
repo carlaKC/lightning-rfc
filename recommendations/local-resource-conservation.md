@@ -350,17 +350,20 @@ We define the following:
 
 Each `(incoming channel_id, outgoing channel_id)` is deterministically
 assigned slots:
-- Create a `ChaCha20` stream keyed with `salt` and using
+- Create a `ChaCha20` stream keyed with `channel_salt` and using
   `incoming_channel_id[0:4]|outgoing_channel_id[0:8]` as a nonce.
 - Read 4 bytes, interpret as a little-endian uint32 and take
   modulo `general_bucket_slot_total`.
 - Repeat until `general_bucket_slot_allocation` unique slot indexes
   have been generated.
 
-Where `salt`:
+Where `node_salt`:
 - MUST be a single random value, chosen by the local node and used across all
   channels.
 - SHOULD be persisted across restarts to restore slot allocations.
+
+And `channel_salt` is derived once per incoming channel:
+- `channel_salt` = `SHA256(node_salt || incoming_channel_id)`
 
 An HTLC occupies a whole number of slots proportional to its liquidity:
 - `slots_used` = `max(1, ceil(amt_msat / general_bucket_slot_liquidity))`
@@ -376,7 +379,16 @@ more expensive for an attacker to exhaust resources, as opening a channel incurs
 a cost, while still allowing reasonable usage by honest peers. Salting 
 resource assignment ensures that the attacker cannot detect which resources
 they will be assigned, and thus cannot strategically open new channels to
-manipulate assignment. The `channel_id` is used rather than the
+manipulate assignment.
+
+A single `node_salt` is used across all channels so that it is the only value
+that needs to be persisted, and the key for each incoming channel is derived
+from it. Deriving a distinct key per incoming channel means that the full
+`incoming_channel_id` contributes to the assignment: the nonce only has room
+for four bytes of it, so keying every channel with `node_salt` directly would
+give identical assignments to any two incoming channels that share a four byte
+prefix. Those four bytes are retained in the nonce, where they are redundant
+but harmless. The `channel_id` is used rather than the
 `short_channel_id` because it is stable for the lifetime of the channel,
 whereas the `short_channel_id` may change (for example, when a channel is
 spliced), silently re-assigning the pair's slots. To produce a 12 byte nonce,
@@ -524,7 +536,7 @@ resolved HTLC at timestamp `t`:
 ### Revenue Threshold Aggregation
 
 It is recommended to track the average value of `incoming_revenue_threshold`
-over several periods to protect against shocks (either naturally occurring,
+over several periods to protect against shocks (either naturally occurrng,
 or induced by an attacker). We define the number of periods tracked over as 
 `window_total` and recommend a value of at least 6.
 
